@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Relógio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #050a08;
+    --glow: #00ff88;
+    --glow-dim: #00cc66;
+    --glow-faint: rgba(0,255,136,0.08);
+    --amber: #ff9900;
+    --red: #ff3333;
+    --panel: rgba(0,255,136,0.04);
+    --border: rgba(0,255,136,0.18);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: 'Orbitron', monospace;
+    color: var(--glow);
+  }
+
+  /* Scanlines overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 3px,
+      rgba(0,0,0,0.18) 3px,
+      rgba(0,0,0,0.18) 4px
+    );
+  }
+
+  /* CRT vignette */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 998; pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      transparent 55%,
+      rgba(0,0,0,0.65) 100%
+    );
+  }
+
+  #app {
+    width: 100vw; height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0;
+    position: relative;
+  }
+
+  /* Decorative corner brackets */
+  .corner {
+    position: absolute;
+    width: 28px; height: 28px;
+    border-color: var(--glow-dim);
+    border-style: solid;
+    opacity: 0.5;
+  }
+  .corner.tl { top: 14px; left: 14px; border-width: 2px 0 0 2px; }
+  .corner.tr { top: 14px; right: 14px; border-width: 2px 2px 0 0; }
+  .corner.bl { bottom: 14px; left: 14px; border-width: 0 0 2px 2px; }
+  .corner.br { bottom: 14px; right: 14px; border-width: 0 2px 2px 0; }
+
+  /* Top status bar */
+  #statusbar {
+    position: absolute;
+    top: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 28px; align-items: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: clamp(9px, 1.4vw, 13px);
+    color: var(--glow-dim);
+    letter-spacing: 0.18em;
+    opacity: 0.7;
+  }
+
+  /* Main time display */
+  #time-wrap {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 4px;
+    width: 100%;
+  }
+
+  #time {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 100px; /* overridden by JS */
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--glow);
+    text-shadow:
+      0 0 8px var(--glow),
+      0 0 20px var(--glow),
+      0 0 60px rgba(0,255,136,0.4),
+      0 0 120px rgba(0,255,136,0.15);
+    position: relative;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  /* Digit flicker animation */
+  @keyframes flicker {
+    0%,100% { opacity: 1; }
+    92% { opacity: 1; }
+    93% { opacity: 0.85; }
+    94% { opacity: 1; }
+    97% { opacity: 0.9; }
+    98% { opacity: 1; }
+  }
+  #time { animation: flicker 8s infinite; }
+
+  .colon {
+    display: inline-block;
+    animation: blink-colon 1s step-start infinite;
+    color: var(--glow-dim);
+    margin: 0 2px;
+  }
+  @keyframes blink-colon {
+    0%,49% { opacity: 1; }
+    50%,100% { opacity: 0.15; }
+  }
+
+  /* Seconds */
+  #seconds {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 32px; /* overridden by JS */
+    letter-spacing: 0.25em;
+    color: var(--glow-dim);
+    text-shadow: 0 0 10px rgba(0,255,136,0.5);
+    margin-top: -2px;
+  }
+
+  /* Date strip */
+  #date {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px; /* overridden by JS */
+    letter-spacing: 0.3em;
+    color: rgba(0,255,136,0.5);
+    margin-top: 6px;
+    text-transform: uppercase;
+  }
+
+  /* Progress bar (seconds) */
+  #progress-wrap {
+    position: absolute;
+    bottom: 24px; left: 10%; right: 10%;
+    height: 2px;
+    background: rgba(0,255,136,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--glow-dim), var(--glow));
+    box-shadow: 0 0 8px var(--glow);
+    border-radius: 2px;
+    transition: width 0.5s linear;
+  }
+
+  /* Fullscreen button */
+  #fs-btn {
+    position: absolute;
+    bottom: 36px; right: 20px;
+    background: none; border: 1px solid var(--border);
+    color: var(--glow-dim); cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px; letter-spacing: 0.12em;
+    padding: 5px 10px; border-radius: 3px;
+    opacity: 0.4; transition: opacity 0.3s;
+    z-index: 100;
+  }
+  #fs-btn:hover { opacity: 0.9; }
+
+  /* Horizontal separator lines */
+  .h-line {
+    position: absolute;
+    left: 8%; right: 8%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+  }
+  .h-line.top { top: 52px; }
+  .h-line.bot { bottom: 44px; }
+
+  /* Ambient pulse behind clock */
+  #glow-bg {
+    position: absolute;
+    width: min(60vw, 400px); height: min(30vh, 200px);
+    background: radial-gradient(ellipse, rgba(0,255,136,0.06) 0%, transparent 70%);
+    pointer-events: none;
+    animation: pulse-bg 4s ease-in-out infinite;
+  }
+  @keyframes pulse-bg {
+    0%,100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.6; }
+  }
+
+  /* Landscape hint - only on very small portrait screens */
+  #rotate-hint {
+    display: none;
+    position: fixed; inset: 0; z-index: 9999;
+    background: var(--bg);
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+    color: var(--glow-dim);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px; letter-spacing: 0.2em;
+    text-align: center;
+  }
+  .rotate-icon { font-size: 48px; animation: rotate-spin 2s ease-in-out infinite; }
+  @keyframes rotate-spin {
+    0%,100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+  }
+
+  @media (orientation: portrait) and (max-width: 500px) {
+    #rotate-hint { display: flex; }
+  }
+</style>
+</head>
+<body>
+
+<div id="rotate-hint">
+  <div class="rotate-icon">📱</div>
+  <div>GIRE O CELULAR</div>
+  <div style="opacity:0.4;font-size:11px">MODO PAISAGEM</div>
+</div>
+
+<div id="app">
+  <div id="glow-bg"></div>
+
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
+
+  <div class="h-line top"></div>
+  <div class="h-line bot"></div>
+
+  <div id="statusbar">
+    <span id="stat-day"></span>
+    <span style="opacity:0.3">◆</span>
+    <span id="stat-week"></span>
+    <span style="opacity:0.3">◆</span>
+    <span id="stat-tz">BRT</span>
+  </div>
+
+  <div id="time-wrap">
+    <div id="time">
+      <span id="h">00</span><span class="colon">:</span><span id="m">00</span>
+    </div>
+    <div id="seconds">:00</div>
+    <div id="date">SEG · 01 JAN 2025</div>
+  </div>
+
+  <div id="progress-wrap">
+    <div id="progress-bar" style="width:0%"></div>
+  </div>
+
+  <button id="fs-btn" onclick="toggleFullscreen()">⛶ TELA CHEIA</button>
+</div>
+
+<script>
+  const DIAS = ['DOM','SEG','TER','QUA','QUI','SEX','SÁB'];
+  const MESES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+  const DIAS_FULL = ['DOMINGO','SEGUNDA','TERÇA','QUARTA','QUINTA','SEXTA','SÁBADO'];
+
+  const elH = document.getElementById('h');
+  const elM = document.getElementById('m');
+  const elS = document.getElementById('seconds');
+  const elDate = document.getElementById('date');
+  const elDay = document.getElementById('stat-day');
+  const elWeek = document.getElementById('stat-week');
+  const elBar = document.getElementById('progress-bar');
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+
+  function tick(){
+    const now = new Date();
+    const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+    const d = now.getDay(), day = now.getDate(), mo = now.getMonth(), yr = now.getFullYear();
+
+    elH.textContent = pad(h);
+    elM.textContent = pad(m);
+    elS.textContent = ':' + pad(s);
+    elDate.textContent = DIAS[d] + ' · ' + pad(day) + ' ' + MESES[mo] + ' ' + yr;
+    elDay.textContent = DIAS_FULL[d];
+
+    // Week number
+    const startOfYear = new Date(yr, 0, 1);
+    const week = Math.ceil(((now - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
+    elWeek.textContent = 'SEM ' + pad(week);
+
+    elBar.style.width = ((s / 59) * 100) + '%';
+  }
+
+  // Fit clock to fill the screen
+  function fitClock(){
+    const el = document.getElementById('time');
+    const elSec = document.getElementById('seconds');
+    const elD = document.getElementById('date');
+    const maxW = window.innerWidth * 0.90;
+    const maxH = window.innerHeight * 0.58;
+    let lo = 20, hi = 900;
+    for(let i = 0; i < 22; i++){
+      const mid = (lo + hi) / 2;
+      el.style.fontSize = mid + 'px';
+      if(el.scrollWidth > maxW || el.scrollHeight > maxH) hi = mid;
+      else lo = mid;
+    }
+    const fs = lo;
+    el.style.fontSize = fs + 'px';
+    elSec.style.fontSize = (fs * 0.27) + 'px';
+    elD.style.fontSize = (fs * 0.13) + 'px';
+  }
+
+  fitClock();
+  window.addEventListener('resize', fitClock);
+  document.fonts.ready.then(fitClock);
+
+  tick();
+  setInterval(tick, 500);
+
+  function toggleFullscreen(){
+    if (!document.fullscreenElement){
+      document.documentElement.requestFullscreen().catch(()=>{});
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  // Auto fullscreen on tap (mobile)
+  document.addEventListener('click', () => {
+    if (!document.fullscreenElement){
+      document.documentElement.requestFullscreen().catch(()=>{});
+    }
+  });
+
+  // Keep screen awake (Wake Lock API)
+  async function keepAwake(){
+    try {
+      if ('wakeLock' in navigator){
+        await navigator.wakeLock.request('screen');
+      }
+    } catch(e){}
+  }
+  keepAwake();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') keepAwake();
+  });
+</script>
+</body>
+</html>
